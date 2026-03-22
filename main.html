@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Notes GitHub Chiffrées</title>
+<style>
+  body {margin:0; font-family:monospace; background:#111; color:#0f0; height:100vh; display:flex; flex-direction:column;}
+  #header {background:#000; padding:10px; display:flex; align-items:center; gap:10px;}
+  #main {flex:1; display:flex; overflow:hidden;}
+  #sidebar {
+    width:280px; background:#000; padding:10px; overflow-y:auto; border-right:1px solid #0f0;
+    transition: transform 0.3s; transform: translateX(-100%);
+  }
+  #sidebar.open {transform: translateX(0);}
+  #editor-area {flex:1; display:flex; flex-direction:column; padding:10px;}
+  .editor {flex:1; border:1px solid #0f0; background:#222; overflow:auto; white-space:pre; padding:8px;}
+  input, button {margin:4px; padding:6px; background:#222; color:#0f0; border:1px solid #0f0;}
+  ul {list-style:none; padding:0;}
+  a {color:#0f0; text-decoration:none;}
+  a:hover {background:#333;}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/codejar@4.3.0/dist/codejar.min.js"></script>
+</head>
+<body>
+
+<div id="header">
+  <button onclick="toggleSidebar()">☰ Arbo</button>
+  <span>Token PAT:</span> <input id="token" size="40" placeholder="ghp_...">
+  <span>User:</span> <input id="owner" size="12" value="jibehem">
+  <span>Repo:</span> <input id="repo" size="15" value="txt">
+  <span>Pass:</span> <input id="pass" type="password" size="20">
+</div>
+
+<div id="main">
+  <div id="sidebar">
+    <h3>Arborescence (main)</h3>
+    <button onclick="loadTree()">Rafraîchir</button>
+    <div id="tree"></div>
+  </div>
+
+  <div id="editor-area">
+    <h2 id="currentPath">Sélectionne un fichier</h2>
+    <div class="editor" contenteditable="true"></div>
+    <div>
+      <button onclick="pullFile()">PULL (déchiffrer)</button>
+      <button onclick="pushFile()">PUSH (branch → commit → merge)</button>
+      <button onclick="newFilePrompt()">Nouveau fichier</button>
+      <button onclick="closeSafe()">Quitter (sauvegarde d’abord)</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ================== STATE ==================
+let jar, currentPath = '', creds = {}, keyDerived = false;
+
+// ================== SIDEBAR TOGGLE ==================
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+// ================== CREDENTIALS PERSISTENCE ==================
+window.onload = () => {
+  const saved = localStorage.getItem('notesCreds');
+  if (saved) {
+    creds = JSON.parse(saved);
+    document.getElementById('token').value = creds.token || '';
+    document.getElementById('owner').value = creds.owner || 'jibehem';
+    document.getElementById('repo').value = creds.repo || 'txt';
+  }
+  saveCreds(); // au cas où
+};
+
+// ================== UTILS ==================
+function saveCreds() {
+  creds = {
+    token: document.getElementById('token').value,
+    owner: document.getElementById('owner').value,
+    repo: document.getElementById('repo').value
+  };
+  localStorage.setItem('notesCreds', JSON.stringify(creds));
+}
+
+async function api(method, url, body = null) {
+  saveCreds();
+  const opt = {
+    method,
+    headers: {
+      Authorization: `Bearer ${creds.token}`,
+      Accept: 'application/vnd.github+json'
+    }
+  };
+  if (body) opt.body = JSON.stringify(body);
+  const r = await fetch(`https://api.github.com/repos/${creds.owner}/${creds.repo}${url}`, opt);
+  if (!r.ok) throw await r.text();
+  return r.json();
+}
+
+// ================== CHIFFREMENT (ChaCha tentative + fallback AES-GCM) ==================
+async function getCryptoKey(password) {
+  const enc = new TextEncoder();
+  const base = await crypto.subtle.importKey('raw', enc.encode(password.padEnd(32,' ')), 'PBKDF2', false, ['deriveBits', 'deriveKey']);
+  const salt = enc.encode('notes-salt-2026-v2');
+  const derived = await crypto.subtle.deriveKey(
+    {name:'PBKDF2', salt, iterations:150000, hash:'SHA-256'},
+    base,
+    {name:'AES-GCM', length:256}, // fallback principal
+    true, ['encrypt','decrypt']
+  );
+
+  // Tentative ChaCha20-Poly1305 (expérimental 2026)
+  try {
+    const chachaKey = await crypto.subtle.deriveKey(
+      {name:'PBKDF2', salt, iterations:150000, hash:'SHA-256'},
+      base,
+      {name:'ChaCha20-Poly1305', length:256},
+      true, ['encrypt','decrypt']
+    );
+    console.log('ChaCha20-Poly1305 supporté !');
+    return {key: chachaKey, algo: 'ChaCha20-Poly1305'};
+  } catch(e) {
+    console.warn('ChaCha non supporté → fallback AES-GCM', e);
+    return {key: derived, algo: 'AES-GCM'};
+  }
+}
+
+async function encrypt(text, password) {
+  if (!keyDerived || !password) throw new Error('Mot de passe requis');
+  const {key, algo} = await getCryptoKey(password);
+  const enc = new TextEncoder();
+  const iv = crypto.getRandomValues(new Uint8Array(algo === 'AES-GCM' ? 12 : 12)); // 96-bit pour les deux
+  const ct = await crypto.subtle.encrypt({name: algo, iv}, key, enc.encode(text));
+  const combined = new Uint8Array(iv.length + ct.byteLength);
+  combined.set(iv);
+  combined.set(new Uint8Array(ct), iv.length);
+  return btoa(String.fromCharCode(...combined)) + '|' + algo; // tag algo pour decrypt
+}
+
+async function decrypt(b64WithAlgo, password) {
+  if (!keyDerived || !password) throw new Error('Mot de passe requis');
+  const [b64, algo] = b64WithAlgo.split('|');
+  const combined = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const iv = combined.slice(0, 12);
+  const ct = combined.slice(12);
+  const {key} = await getCryptoKey(password);
+  const pt = await crypto.subtle.decrypt({name: algo, iv}, key, ct);
+  return new TextDecoder().decode(pt);
+}
+
+// ================== ARBORESCENCE ==================
+async function loadTree() {
+  try {
+    const data = await api('GET', '/git/trees/main?recursive=1');
+    let html = '<ul>';
+    data.tree.forEach(item => {
+      if (item.type === 'blob') {
+        const b64 = btoa(item.path);
+        html += `<li><a href="#" onclick="openFile('${item.path}', '${b64}'); return false;">📄 ${item.path}</a></li>`;
+      } else {
+        html += `<li>📁 ${item.path}/</li>`;
+      }
+    });
+    html += '</ul>';
+    document.getElementById('tree').innerHTML = html;
+  } catch(e) {
+    alert('Erreur arbre : ' + e);
+  }
+}
+
+// ================== ÉDITEUR ==================
+const editorDiv = document.querySelector('.editor');
+jar = CodeJar(editorDiv, ed => { ed.innerHTML = ed.textContent; }, {tab: '  '}); // highlight minimal
+
+async function openFile(path, b64Path) {
+  currentPath = path;
+  document.getElementById('currentPath').textContent = path;
+  history.pushState({path}, '', `?p=${b64Path}`);
+  jar.update('');
+  toggleSidebar(); // ferme le menu après sélection
+  // auto pull ?
+  if (confirm('Charger & déchiffrer maintenant ?')) await pullFile();
+}
+
+async function pullFile() {
+  if (!currentPath) return alert('Aucun fichier sélectionné');
+  const pass = document.getElementById('pass').value;
+  if (!pass) return alert('Mot de passe requis');
+  try {
+    const data = await api('GET', `/contents/${encodeURIComponent(currentPath)}?ref=main`);
+    const decrypted = await decrypt(data.content, pass);
+    jar.update(decrypted);
+    alert('Chargé & déchiffré');
+  } catch(e) { alert('Pull échoué : ' + e); }
+}
+
+async function pushFile() {
+  if (!currentPath) return alert('Aucun fichier sélectionné');
+  const pass = document.getElementById('pass').value;
+  if (!pass) return alert('Mot de passe requis');
+  const text = jar.toString();
+  try {
+    const encrypted = await encrypt(text, pass);
+    const branch = `edit-${Date.now()}`;
+    
+    // 1. Créer branche depuis main
+    const mainRef = await api('GET', '/git/ref/heads/main');
+    await api('POST', '/git/refs', {ref: `refs/heads/${branch}`, sha: mainRef.object.sha});
+    
+    // 2. Commit
+    let sha = null;
+    try {
+      const current = await api('GET', `/contents/${encodeURIComponent(currentPath)}?ref=${branch}`);
+      sha = current.sha;
+    } catch {} // nouveau fichier → sha null
+    await api('PUT', `/contents/${encodeURIComponent(currentPath)}`, {
+      message: `Update ${currentPath}`,
+      content: encrypted,
+      sha,
+      branch
+    });
+    
+    // 3. Merge
+    if (confirm('Merger automatiquement vers main ?')) {
+      await api('POST', '/merges', {base: 'main', head: branch, commit_message: 'Auto-merge depuis éditeur'});
+      alert('Poussé + mergé !');
+    } else {
+      alert(`Branche créée : ${branch}\n→ merge manuel sur GitHub si besoin`);
+    }
+  } catch(e) { alert('Push/merger problème : ' + e); }
+}
+
+function newFilePrompt() {
+  const newPath = prompt('Path:', '');
+  if (newPath) {
+    currentPath = newPath;
+    document.getElementById('currentPath').textContent = newPath;
+    jar.update('');
+    history.pushState({path: newPath}, '', `?p=${btoa(newPath)}`);
+  }
+}
+
+function closeSafe() {
+  if (confirm('Sauvegarder avant de quitter ?')) pushFile();
+  else window.close();
+}
+
+// ================== PROTECTIONS ==================
+window.onbeforeunload = () => "Attention : travail non sauvegardé !";
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    pushFile();
+  }
+  if (e.key === 'F5' || (e.ctrlKey && e.key === 'r')) {
+    e.preventDefault();
+    alert('Utilise PULL / PUSH pour recharger');
+  }
+});
+
+// Restore from URL ?p=...
+const params = new URLSearchParams(location.search);
+const p = params.get('p');
+if (p) {
+  try {
+    const path = atob(p);
+    openFile(path, p);
+  } catch {}
+}
+</script>
+</body>
+</html>
