@@ -3,15 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <title>Minimal Git Crypto Editor</title>
-  <script src="https://cdn.jsdelivr.net/npm/codejar@3.6.0/codejar.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.7.10/dist/modules/libsodium-wrappers.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codejar@3.6.0/codejar.js"></script>	
+  <script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.8.2/dist/modules/libsodium-wrappers.min.js"></script>
   <style>
-    body { margin:0; display:flex; height:100vh; font-family:sans-serif; }
-    #sidebar { width:300px; overflow:auto; border-right:1px solid #ccc; }
+    body { margin:0; display:flex; height:100vh; font-family:sans-serif; background:#111; color:#999;}
+    #sidebar { width:300px; overflow:auto; border-right:1px solid #999; }
     #editor { flex:1; padding:10px; }
-    #topbar { position:fixed; top:0; left:0; right:0; background:#eee; padding:5px; }
+    #topbar { position:fixed; top:0; left:0; right:0; padding:5px; }
     #editorArea { margin-top:40px; height:calc(100% - 40px); }
     .file { cursor:pointer; padding:3px; }
+    input, button {margin:4px; padding:6px; background:#222; color:#999; border:1px solid #999;}
   </style>
 </head>
 <body>
