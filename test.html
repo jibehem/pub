@@ -1,17 +1,17 @@
 <!DOCTYPE html>
-<html>
+<html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>Minimal Git Crypto Editor</title>
-  <script src="https://cdn.jsdelivr.net/npm/codejar@3.6.0/codejar.js"></script>	
-  <script src="https://cdn.jsdelivr.net/npm/libsodium-wrappers@0.8.2/dist/modules/libsodium-wrappers.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GitHub Crypto Editor</title>
+  
   <style>
-    body { margin:0; display:flex; height:100vh; font-family:sans-serif; background:#111; color:#999;}
-    #sidebar { width:300px; overflow:auto; border-right:1px solid #999; }
-    #editor { flex:1; padding:10px; }
-    #topbar { position:fixed; top:0; left:0; right:0; padding:5px; }
-    #editorArea { margin-top:40px; height:calc(100% - 40px); }
-    .file { cursor:pointer; padding:3px; }
+    body { margin: 0; display: flex; height: 100vh; font-family: sans-serif; background:#111; color:#999;}
+    #sidebar { width: 300px; overflow: auto; border-right: 1px solid #ccc; }
+    #editor { flex: 1; padding: 10px; }
+    #topbar { position: fixed; top: 0; left: 0; right: 0; background: #eee; padding: 5px; z-index: 10; }
+    #editorArea { margin-top: 40px; height: calc(100% - 40px); border: 1px solid #ddd; }
+    .file { cursor: pointer; padding: 3px; }
     input, button {margin:4px; padding:6px; background:#222; color:#999; border:1px solid #999;}
   </style>
 </head>
@@ -26,40 +26,39 @@
     PAT <input id="pat">
     Branch <input id="branch" value="main">
     Password <input id="password" type="password">
+    <button onclick="loadTree()">LOAD</button>
     <button onclick="newFile()">NEW</button>
     <button onclick="pushFile()">PUSH</button>
-    <button onclick="loadTree()">LOAD</button>
   </div>
   <div id="editorArea" contenteditable="true"></div>
 </div>
 
-<script>
-let jar;
+<script type="module">
+import { CodeJar } from 'https://cdn.jsdelivr.net/npm/codejar@3.6.0/+esm';
 let currentPath = "";
 
-async function init() {
-await sodium.ready;
 
-const my = editor => {
-let code = editor.textContent;
+// Initialisation de l'éditeur CodeJar
+const editorElement = document.getElementById("editorArea");
+const my = editorElement => {
+let code = editorElement.textContent;
 code = code.replace(
 /\((\w+?)(\b)/g,
 '(<font color="#8a2be2">$1</font>$2'
 );
-editor.innerHTML = code;
+editorElement.innerHTML = code;
 };
 
+const jar = CodeJar(editorElement, my);
 
-jar = CodeJar(document.getElementById('editorArea'), my);
-}
 
-init();
 
+// Charge l'arborescence des fichiers
 async function loadTree() {
-  const user = userEl.value;
-  const repo = repoEl.value;
-  const branch = branchEl.value;
-  const pat = patEl.value;
+  const user = document.getElementById("user").value;
+  const repo = document.getElementById("repo").value;
+  const branch = document.getElementById("branch").value;
+  const pat = document.getElementById("pat").value;
 
   const res = await fetch(`https://api.github.com/repos/${user}/${repo}/git/trees/${branch}?recursive=1`, {
     headers: { Authorization: `token ${pat}` }
@@ -67,10 +66,10 @@ async function loadTree() {
 
   const data = await res.json();
   const sidebar = document.getElementById("sidebar");
-  sidebar.innerHTML = "";
+  sidebar.innerHTML = "";  // Vide la sidebar avant de la remplir
 
   data.tree.forEach(item => {
-    if(item.type === "blob") {
+    if (item.type === "blob") {
       const div = document.createElement("div");
       div.className = "file";
       div.innerText = item.path;
@@ -80,13 +79,14 @@ async function loadTree() {
   });
 }
 
+// Ouvre un fichier depuis l'arborescence
 async function openFile(path) {
   currentPath = path;
-  const user = userEl.value;
-  const repo = repoEl.value;
-  const branch = branchEl.value;
-  const pat = patEl.value;
-  const password = passwordEl.value;
+  const user = document.getElementById("user").value;
+  const repo = document.getElementById("repo").value;
+  const branch = document.getElementById("branch").value;
+  const pat = document.getElementById("pat").value;
+  const password = document.getElementById("password").value;
 
   const res = await fetch(`https://api.github.com/repos/${user}/${repo}/contents/${path}?ref=${branch}`, {
     headers: { Authorization: `token ${pat}` }
@@ -95,29 +95,31 @@ async function openFile(path) {
   const data = await res.json();
   const content = atob(data.content);
 
-  const decrypted = decrypt(content, password);
+  const decrypted = await decrypt(content, password);
   jar.updateCode(decrypted);
 }
 
+// Création d'un nouveau fichier
 function newFile() {
   currentPath = prompt("Path du fichier:");
-  jar.updateCode("");
+  jar.updateCode("");  // Vider l'éditeur
 }
 
+// Push les changements
 async function pushFile() {
-  const user = userEl.value;
-  const repo = repoEl.value;
-  const branch = branchEl.value;
-  const pat = patEl.value;
-  const password = passwordEl.value;
+  const user = document.getElementById("user").value;
+  const repo = document.getElementById("repo").value;
+  const branch = document.getElementById("branch").value;
+  const pat = document.getElementById("pat").value;
+  const password = document.getElementById("password").value;
 
   const content = jar.toString();
-  const encrypted = encrypt(content, password);
+  const encrypted = await encrypt(content, password);
   const b64 = btoa(encrypted);
 
   let sha = null;
 
-  // check si fichier existe
+  // Vérifier si le fichier existe
   try {
     const res = await fetch(`https://api.github.com/repos/${user}/${repo}/contents/${currentPath}`, {
       headers: { Authorization: `token ${pat}` }
@@ -141,47 +143,75 @@ async function pushFile() {
   });
 
   alert("Pushed !");
-  loadTree();
+  loadTree();  // Recharger l'arborescence après push
 }
 
-function encrypt(text, password) {
-  const key = sodium.crypto_generichash(32, password);
-  const nonce = sodium.randombytes_buf(12);
-  const encrypted = sodium.crypto_aead_chacha20poly1305_ietf_encrypt(
-    text,
-    null,
-    null,
-    nonce,
-    key
+// Fonction de chiffrement (ChaCha20-Poly1305 avec Web Crypto API)
+async function encrypt(text, password) {
+  const key = await getKey(password);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+
+  const encoded = new TextEncoder().encode(text);
+
+  const ciphertext = await crypto.subtle.encrypt(
+    {
+      name: "ChaCha20-Poly1305",
+      iv: iv
+    },
+    key,
+    encoded
   );
-  return btoa(String.fromCharCode(...nonce)) + ":" + btoa(String.fromCharCode(...encrypted));
+
+  return new Uint8Array([...iv, ...new Uint8Array(ciphertext)]);  // Renvoie la combinaison IV + ciphertext
 }
 
-function decrypt(data, password) {
-  const key = sodium.crypto_generichash(32, password);
-  const [nonceB64, encB64] = data.split(":");
-  const nonce = Uint8Array.from(atob(nonceB64), c => c.charCodeAt(0));
-  const enc = Uint8Array.from(atob(encB64), c => c.charCodeAt(0));
+// Fonction de déchiffrement (ChaCha20-Poly1305 avec Web Crypto API)
+async function decrypt(data, password) {
+  const iv = data.slice(0, 12);
+  const ciphertext = data.slice(12);
 
-  const decrypted = sodium.crypto_aead_chacha20poly1305_ietf_decrypt(
-    null,
-    enc,
-    null,
-    nonce,
-    key
+  const key = await getKey(password);
+
+  const decrypted = await crypto.subtle.decrypt(
+    {
+      name: "ChaCha20-Poly1305",
+      iv: iv
+    },
+    key,
+    ciphertext
   );
 
   return new TextDecoder().decode(decrypted);
 }
 
-// shortcuts DOM
-const userEl = document.getElementById("user");
-const repoEl = document.getElementById("repo");
-const patEl = document.getElementById("pat");
-const branchEl = document.getElementById("branch");
-const passwordEl = document.getElementById("password");
+// Génère une clé à partir du mot de passe
+async function getKey(password) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: enc.encode("salt"),  // Utilise un "salt" statique pour simplifier
+      iterations: 100000,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    {
+      name: "ChaCha20-Poly1305",
+      length: 256
+    },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
 
 </script>
-
 </body>
 </html>
