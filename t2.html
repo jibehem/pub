@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test CodeJar</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+    }
+    #editor {
+      flex: 1;
+      padding: 10px;
+      border: 1px solid #ccc;
+      height: 80vh;
+      font-size: 14px;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+
+<div id="editor" contenteditable="true"></div>
+
+<!-- CodeJar Script (version classique UMD) -->
+<script src="https://cdn.jsdelivr.net/npm/codejar@3.6.0/codejar.js"></script>
+
+<script>
+  // Code qui initialise l'éditeur CodeJar
+  const editorElement = document.getElementById("editor");
+  const jar = CodeJar(editorElement);
+  
+  jar.updateCode("console.log('Hello CodeJar!');");
+</script>
+
+</body>
+</html>
